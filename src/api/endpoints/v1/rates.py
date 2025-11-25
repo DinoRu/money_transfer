@@ -6,7 +6,7 @@ from fastapi.params import Depends
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 
-from src.db.models import Rate
+# from src.db.models import Rate
 from src.db.session import get_session
 from src.schemas.rates import RateRequest, Rates, ConvertResponseModel
 

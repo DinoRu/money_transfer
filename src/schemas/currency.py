@@ -3,7 +3,6 @@ from typing import List
 
 from pydantic import BaseModel
 
-from src.db.models import PaymentType
 from src.schemas.payment_method import PaymentTypeRead
 from src.schemas.rtype import ReceivingTypeBase, ReceivingTypeRead
 

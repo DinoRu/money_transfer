@@ -6,7 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.auth.permission import admin_required
-from src.db.models import ReceivingType
+# from src.db.models import ReceivingType
 from src.db.session import get_session
 from src.schemas.rtype import ReceivingTypeRead, ReceivingTypeCreate, ReceivingTypeUpdate
 

@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from watchfiles import awatch
 
 from src.auth.permission import admin_required
-from src.db.models import PaymentType
+# from src.db.models import PaymentType
 from src.db.session import get_session
 from src.schemas.payment_method import PaymentTypeRead, PaymentTypeCreate, PaymentTypeUpdate
 
@@ -71,7 +71,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from watchfiles import awatch
 
-from src.db.models import PaymentType
+# from src.db.models import PaymentType
 from src.db.session import get_session
 from src.schemas.payment_method import PaymentTypeRead, PaymentTypeCreate, PaymentTypeUpdate
 
