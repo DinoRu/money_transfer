@@ -4,12 +4,12 @@ from sqlalchemy import text
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.session import get_session
+from src.db.session import get_db
 
 router = APIRouter()
 
 @router.get("/healthcheck", status_code=status.HTTP_200_OK)
-async def healthcheck(session: AsyncSession = Depends(get_session)):
+async def healthcheck(session: AsyncSession = Depends(get_db)):
 	"""
 	Health check endpoint.
 	- Verifies database connectivity.

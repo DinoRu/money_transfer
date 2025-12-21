@@ -1,3 +1,13 @@
 {
-  "cSpell.words": ["nullable"]
+  "cSpell.words": [
+    "autoflush",
+    "joinedload",
+    "Metadonnées",
+    "nullable",
+    "onupdate",
+    "postgresql",
+    "selectin",
+    "selectinload",
+    "uselist"
+  ]
 }

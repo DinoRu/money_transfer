@@ -6,14 +6,13 @@ from enum import Enum
 from typing import List, Optional
 
 from sqlalchemy import Index, UniqueConstraint
-from sqlmodel import SQLModel, Field, Column, DECIMAL, Relationship
+from sqlmodel import Numeric, SQLModel, Field, Column, DECIMAL, Relationship, func
 import sqlalchemy.dialects.postgresql as pg
 
 class UserRole(str, Enum):
     ADMIN = 'admin'
     USER = 'user'
     AGENT = 'agent'
-    
 
 
 class PaymentPartnerType(str, enum.Enum):
@@ -48,7 +47,7 @@ class User(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(pg.TIMESTAMP(timezone=True), default=datetime.utcnow))
     updated_at: datetime = Field(default_factory=datetime.utcnow,
-                                 sa_column=Column(pg.TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow))
+                                sa_column=Column(pg.TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow))
 
     token: "FCMToken" = Relationship(back_populates='user', cascade_delete=True)
     transactions: List["Transaction"] = Relationship(back_populates='sender', cascade_delete=True)
@@ -69,15 +68,12 @@ class User(SQLModel, table=True):
 class Currency(SQLModel, table=True):
     __tablename__ = "currencies"
     id: uuid.UUID = Field(sa_column=Column(pg.UUID, nullable=False, primary_key=True, default=uuid.uuid4))
-    code: str = Field(sa_column=Column(pg.VARCHAR, nullable=False), description="Code ISO de la monnaie, ex: USD, EUR")
+    code: str = Field(sa_column=Column(pg.VARCHAR, nullable=False, index=True), description="Code ISO de la monnaie, ex: USD, EUR")
     name: str = Field(sa_column=Column(pg.VARCHAR, nullable=False))
     symbol: str = Field(sa_column=Column(pg.VARCHAR, nullable=False), description="Symbole de la monnaie, ex: $, €")
-    description: str | None = Field(sa_column=Column(pg.VARCHAR, default=None)) 
     is_active: bool = Field(sa_column=Column(pg.BOOLEAN, nullable=False, default=True))
     countries: List["Country"] = Relationship(back_populates="currency", cascade_delete=True)
-    
-    exchange_rates_from: List["ExchangeRates"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[ExchangeRates.from_currency_id]"}, back_populates="from_currency")
-    exchange_rates_to: List["ExchangeRates"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[ExchangeRates.to_currency_id]"}, back_populates="to_currency")
+
     
     def __repr__(self):
         return f"Currency(code={self.code}, name={self.name}, symbol={self.symbol})"
@@ -108,8 +104,6 @@ class Country(SQLModel, table=True):
     currency: "Currency" = Relationship(back_populates='countries')
     payment_partners: List["PaymentPartner"] = Relationship(back_populates="country", cascade_delete=True)
     
-    fees_from: List["Fee"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Fee.from_country_id]"}, back_populates="from_country")
-    fees_to: List["Fee"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Fee.to_country_id]"}, back_populates="to_country")
     
     def __repr__(self):
         return f"Country(name={self.name}, currency_id={self.currency_id})"
@@ -197,10 +191,10 @@ class Transaction(SQLModel, table=True):
     reference: str = Field(sa_column=Column(pg.VARCHAR(12), unique=True), default_factory=generate_reference)
     
     # Informations geographiques
-    sender_country_id: uuid.UUID = Field(foreign_key="countries.id")
-    receiver_country_id: uuid.UUID = Field(foreign_key="countries.id")
-    sender_partner_id: uuid.UUID = Field(foreign_key="payment_partners.id")
-    receiver_partner_id: uuid.UUID = Field(foreign_key="payment_partners.id")
+    sender_country: str = Field(sa_column=Column(pg.VARCHAR(200), nullable=False))
+    receiver_country: str = Field(sa_column=Column(pg.VARCHAR(200), nullable=False))
+    sender_partner: str = Field(sa_column=Column(pg.VARCHAR(20), nullable=False))
+    receiver_partner: str = Field(sa_column=Column(pg.VARCHAR(200), nullable=False))
     
     # Informations sur l'expéditeur et le destinataire
     sender_id: uuid.UUID = Field(foreign_key="users.id")
@@ -233,40 +227,65 @@ class Transaction(SQLModel, table=True):
                                  sa_column=Column(pg.TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow))
     
     # Relations
-    sender_country: "Country" = Relationship(sa_relationship_kwargs={"foreign_keys": "[Transaction.sender_country_id]"})
-    receiver_country: "Country" = Relationship(sa_relationship_kwargs={"foreign_keys": "[Transaction.receiver_country_id]"})
-    sender_partner: "PaymentPartner" = Relationship(sa_relationship_kwargs={"foreign_keys": "[Transaction.sender_partner_id]"})
-    receiver_partner: "PaymentPartner" = Relationship(sa_relationship_kwargs={"foreign_keys": "[Transaction.receiver_partner_id]"})
     sender: "User" = Relationship(back_populates='transactions')
 
 
+
 class Fee(SQLModel, table=True):
-    __tablename__ = 'fees'
-    __table_args__ = (Index('idx_from_to', 'from_country_id', 'to_country_id'),)
-
-    id: uuid.UUID = Field(sa_column=Column(pg.UUID, nullable=False, primary_key=True, default=uuid.uuid4))
-    from_country_id: uuid.UUID = Field(foreign_key='countries.id', nullable=False, ondelete='CASCADE')
-    to_country_id: uuid.UUID = Field(foreign_key='countries.id', nullable=False, ondelete='CASCADE')
-    
-    # Types de frais
-    fee_type: FeeType = Field(sa_column=Column(pg.VARCHAR(20), nullable=False))
-    fee_value: Decimal = Field(sa_column=Column(DECIMAL(precision=10, scale=2), nullable=False))
-    # Applicabilité
-    min_amount: Decimal = Field(sa_column=Column(DECIMAL(precision=15, scale=2), default=0))
-    max_amount: Decimal | None = Field(sa_column=Column(DECIMAL(precision=15, scale=2), default=None))
-    # Métadonnées
-    is_active: bool = Field(sa_column=Column(pg.BOOLEAN, nullable=False, default=True))
-    # Relations
-    from_country: "Country" = Relationship(
-    back_populates="fees_from",
-    sa_relationship_kwargs={"foreign_keys": "[Fee.from_country_id]"}
-)
-
-    to_country: "Country" = Relationship(
-        back_populates="fees_to",
-        sa_relationship_kwargs={"foreign_keys": "[Fee.to_country_id]"}
+    __tablename__ = "fees"
+    __table_args__ = (
+        Index("idx_fee_corridor", "corridor"),
     )
-    
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(pg.UUID, primary_key=True, nullable=False),
+    )
+
+    # Corridor optimisé (RU->CI)
+    corridor: str = Field(
+        sa_column=Column(pg.VARCHAR(20), nullable=False)
+    )
+
+    # Types de frais
+    fee_type: FeeType = Field(
+        sa_column=Column(pg.VARCHAR(20), nullable=False)
+    )
+
+    fee_value: Decimal = Field(
+        sa_column=Column(Numeric(20, 2), nullable=False)
+    )
+
+    # Applicabilité
+    min_amount: Decimal = Field(
+        default=Decimal("0"),
+        sa_column=Column(Numeric(20, 2), nullable=False, server_default="0"),
+    )
+
+    max_amount: Decimal | None = Field(
+        default=None,
+        sa_column=Column(Numeric(20, 2), nullable=True),
+    )
+
+    # Métadonnées
+    is_active: bool = Field(
+        default=True,
+        sa_column=Column(pg.BOOLEAN, nullable=False, server_default="true"),
+    )
+
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=False),
+    )
+
+    updated_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            onupdate=datetime.utcnow,
+        ),
+    )
 
 
 class FCMToken(SQLModel, table=True):
@@ -283,23 +302,17 @@ class FCMToken(SQLModel, table=True):
 class ExchangeRates(SQLModel, table=True):
     __tablename__ = "ex_rates"
     __table_args__ = (
-        Index("idx_from_to_currency", "from_currency_id", "to_currency_id"),
-        UniqueConstraint('from_currency_id', 'to_currency_id', name='unique_currency_pair'),
+        Index("idx_ex_rates_corridor", "corridor"),
+        UniqueConstraint("corridor"),
     )
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, sa_column=Column(pg.UUID, primary_key=True))
-    from_currency_id: uuid.UUID = Field(foreign_key='currencies.id', nullable=False)
-    to_currency_id: uuid.UUID = Field(foreign_key='currencies.id', nullable=False)
-    rate: Decimal = Field(sa_column=Column(DECIMAL, nullable=False))
-    
-    updated_by_user_id: uuid.UUID = Field(foreign_key='users.id', nullable=True, description="ID de l'utilisateur qui a mis à jour le taux")
 
-    from_currency: Currency = Relationship(sa_relationship_kwargs={"foreign_keys": "[ExchangeRates.from_currency_id]"}, back_populates="exchange_rates_from")
-    to_currency: Currency = Relationship(sa_relationship_kwargs={"foreign_keys": "[ExchangeRates.to_currency_id]"}, back_populates="exchange_rates_to")
-    
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, sa_column=Column(pg.UUID, primary_key=True))
+    base_currency: str = Field(sa_column=Column(pg.VARCHAR(3), nullable=False))
+    quote_currency: str = Field(sa_column=Column(pg.VARCHAR(3), nullable=False))
+    corridor: str = Field(sa_column=Column(pg.VARCHAR(10), nullable=False, index=True))
+    rate: Decimal = Field(sa_column=Column(Numeric(20, 8), nullable=False))
+    effective_date: datetime = Field(sa_column=Column(pg.DATE, nullable=False), default=func.current_date())
     
     def __repr__(self):
-        return f"ExchangeRates(from_currency_id={self.from_currency.code}, to_currency_id={self.to_currency.code}, rate={self.rate})"
+        return f"ExchangeRates(base_currency={self.base_currency}, quote_currency={self.quote_currency}, rate={self.rate})"
     
-    def calculate_exchanged_amount(self, amount: Decimal) -> Decimal:
-        """Calcule le montant échangé en fonction du taux de change."""
-        return amount * self.rate
