@@ -5,9 +5,12 @@ from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, text
+
 from sqlmodel import SQLModel, Field, Column, DECIMAL, Relationship
 import sqlalchemy.dialects.postgresql as pg
+
+
 
 class UserRole(str, Enum):
     ADMIN = 'admin'
@@ -143,6 +146,27 @@ class Fee(SQLModel, table=True):
     from_country_id: uuid.UUID = Field(foreign_key='countries.id', nullable=False, ondelete='CASCADE')
     to_country_id: uuid.UUID = Field(foreign_key='countries.id', nullable=False, ondelete='CASCADE')
     fee: Decimal = Field(sa_column=Column(DECIMAL(precision=10, scale=2), nullable=False))
+     # =========================
+    # TIMESTAMPS
+    # =========================
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=text("now()")
+        )
+    )
+
+    updated_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=text("now()"),
+            onupdate=datetime.utcnow
+        )
+    )
 
 
 class FCMToken(SQLModel, table=True):
