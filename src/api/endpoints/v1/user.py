@@ -59,6 +59,7 @@ async def authenticate_user(credential: str, password: str, session: AsyncSessio
         return None
     return user
 
+
 @router.post("/send-mail")
 async def send_mail():
     to = "diarra.msa@gmail.com"
@@ -133,7 +134,7 @@ async def user_info(current_user = Depends(get_current_user)):
 
 
 
-@router.get("/", response_model=List[UserRead], dependencies=[Depends(admin_required)])
+@router.get("", response_model=List[UserRead], dependencies=[Depends(admin_required)])
 async def get_all_users(
     session: AsyncSession = Depends(get_session)
 ):

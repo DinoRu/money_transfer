@@ -64,7 +64,7 @@ async def create_exchange_rate(
     return {"message": "Taux de change ajouté avec succès! 🎉"}
 
 
-@router.get("/", status_code=status.HTTP_200_OK, response_model=List[ExchangeRateRead])
+@router.get("", status_code=status.HTTP_200_OK, response_model=List[ExchangeRateRead])
 async def get_exchange_rates(session: AsyncSession = Depends(get_session)):
     stmt = select(ExchangeRates).order_by(ExchangeRates.id)
     results = await session.execute(stmt)
