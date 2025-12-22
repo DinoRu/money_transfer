@@ -434,7 +434,7 @@ async def get_countries_simple(
             id=c.id,
             name=c.name,
             code_iso=c.code_iso,
-            flag_url=c.flag_url
+
         )
         for c in countries
     ]
@@ -460,7 +460,6 @@ async def create_multiple_countries(
         "name": "United States",
         "code_iso": "US",
         "currency_id": "uuid-here",
-        "flag_url": "https://..."
       },
       {
         "name": "France",
