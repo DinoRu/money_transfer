@@ -11,7 +11,7 @@ from src.schemas.fcm_token import FCMToken as FCMTokenModel, TokenRequest
 
 router = APIRouter()
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def store_token(token_data: TokenRequest, session: AsyncSession = Depends(get_session)) -> dict:
 	new_token = FCMToken(token=token_data.token)
 	session.add(new_token)
@@ -19,7 +19,7 @@ async def store_token(token_data: TokenRequest, session: AsyncSession = Depends(
 	await session.refresh(new_token)
 	return {"message": "Token was stored successful!"}
 
-@router.get("/", status_code=status.HTTP_200_OK, response_model=List[FCMTokenModel])
+@router.get("", status_code=status.HTTP_200_OK, response_model=List[FCMTokenModel])
 async def get_tokens(session: AsyncSession = Depends(get_session)):
 	stmt = select(FCMToken)
 	results = await session.execute(stmt)

@@ -60,7 +60,7 @@ async def validate_currency_code(code: str, session: AsyncSession) -> None:
 # ============================================
 
 @router.post(
-    "/",
+    "",
     status_code=status.HTTP_201_CREATED,
     response_model=CurrencyModel,
     dependencies=[Depends(admin_required)]
@@ -108,7 +108,7 @@ async def create_currency(
 
 
 @router.get(
-    "/",
+    "",
     response_model=List[CurrencyModel],
     status_code=status.HTTP_200_OK
 )

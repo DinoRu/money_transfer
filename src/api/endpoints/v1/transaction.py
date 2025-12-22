@@ -79,7 +79,7 @@ async def get_transaction_or_404(id: uuid.UUID, session: AsyncSession = Depends(
 	transaction = result.scalar_one_or_none()
 	return transaction
 
-@router.post("/", status_code=status.HTTP_201_CREATED, response_model=TransactionRead)
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=TransactionRead)
 async def create_transaction(
 		transaction_data: TransactionCreate,
 		sender: User = Depends(get_current_user),
@@ -116,7 +116,7 @@ async def websocket_endpoint(websocket: WebSocket):
 	except WebSocketDisconnect:
 		manager.disconnect(websocket)
 
-@router.get("/", response_model=List[TransactionRead])
+@router.get("", response_model=List[TransactionRead])
 async def get_transactions(
 		status: Optional[TransactionStatus] = None,
 		page: int = 1,

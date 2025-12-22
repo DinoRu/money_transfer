@@ -106,7 +106,7 @@ async def validate_fee_not_exists(
 # ============================================
 
 @router.post(
-    "/",
+    "",
     response_model=FeeView,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(admin_required)]
@@ -152,7 +152,7 @@ async def create_fee(
 
 
 @router.get(
-    "/",
+    "",
     response_model=List[FeeView]
 )
 async def get_all_fees(

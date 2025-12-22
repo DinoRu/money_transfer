@@ -30,7 +30,7 @@ async def get_exchange_rate_or_404(id: uuid.UUID, session: AsyncSession = Depend
     return result.scalar_one_or_none()
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED, dependencies=[Depends(admin_required)])
+@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(admin_required)])
 async def create_exchange_rate(
         rate_data: CreateExchangeRate,
         session: AsyncSession = Depends(get_session)

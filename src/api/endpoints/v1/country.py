@@ -81,7 +81,7 @@ async def validate_currency_exists(currency_id: UUID, session: AsyncSession) -> 
 # ============================================
 
 @router.post(
-    "/",
+    "",
     status_code=status.HTTP_201_CREATED,
     response_model=CountryModel,
     dependencies=[Depends(admin_required)]
@@ -122,7 +122,7 @@ async def create_country(
 
 
 @router.get(
-    "/",
+    "",
     status_code=status.HTTP_200_OK,
     response_model=List[CountryModel]
 )

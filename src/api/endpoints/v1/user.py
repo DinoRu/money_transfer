@@ -37,7 +37,7 @@ message['From'] = sender_mail
 message["To"] = to_mail
 message["Subject"] = "Subject here"
 
-async def get_user_or_phone(user_phone: str, session: Depends(get_session)):
+async def get_user_or_phone(user_phone: str, session: AsyncSession = Depends(get_session)):
     stmt = select(User).where(User.phone == user_phone)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()

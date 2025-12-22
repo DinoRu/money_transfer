@@ -31,7 +31,7 @@ async def type_create(
 	await session.refresh(type)
 	return type
 
-@router.get("/", status_code=status.HTTP_200_OK, response_model=List[ReceivingTypeRead])
+@router.get("", status_code=status.HTTP_200_OK, response_model=List[ReceivingTypeRead])
 async def get_receiving_types(session: AsyncSession = Depends(get_session)):
 	stmt = select(ReceivingType)
 	results = await session.execute(stmt)
