@@ -13,7 +13,7 @@ from src.schemas.currency import CurrencyModel
 class CountryBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     code_iso: str = Field(..., min_length=2, max_length=3, description="ISO country code (e.g., US, FR)")
-    
+    can_send: Optional[bool] = Field(default=True, description="Indicates if sending is allowed from this country")
     
     @field_validator('code_iso')
     @classmethod
@@ -31,6 +31,7 @@ class CountryUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     code_iso: Optional[str] = Field(None, min_length=2, max_length=3)
     currency_id: Optional[UUID] = None
+    can_send: Optional[bool] = None
     
     @field_validator('code_iso')
     @classmethod
