@@ -406,74 +406,219 @@ async def seed_fees(countries_dict):
 
 
 async def seed_payment_types(countries_dict):
-    """Créer les types de paiement pour chaque pays"""
-    print("Création des types de paiement...")
+    print("Création des méthodes de paiement (entrée)...")
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(PaymentType))
-        existing = result.scalars().all()
-
-        if existing:
-            print(f"ℹ️  {len(existing)} types de paiement existent déjà")
+        if (await session.execute(select(PaymentType))).scalars().first():
+            print("ℹ️  Méthodes de paiement déjà existantes")
             return
 
-        payment_types_list = [
-            "Mobile Money",
-            "Virement bancaire",
-            "Espèces",
-            "Carte bancaire"
-        ]
+        created = []
 
-        payment_types = []
-        for country_code, country in countries_dict.items():
-            for payment_type in payment_types_list:
+        for country_code, methods in PAYMENT_METHODS_BY_COUNTRY.items():
+            country = countries_dict.get(country_code)
+            if not country:
+                continue
+
+            for method in methods:
                 pt = PaymentType(
-                    id=stable_uuid(f"payment_type.{country_code}.{payment_type}"),
-                    type=payment_type,
-                    owner_full_name="VOTRE ENTREPRISE",
-                    phone_number=None,
-                    account_number=None,
-                    country_id=country.id
+                    id=stable_uuid(f"payment.{country_code}.{method['type']}"),
+                    type=method["type"],
+                    owner_full_name=method["owner"],
+                    phone_number=method["phone"],
+                    account_number=method["account"],
+                    country_id=country.id,
                 )
-                payment_types.append(pt)
                 session.add(pt)
+                created.append(pt)
 
         await session.commit()
-        print(f"✅ {len(payment_types)} types de paiement créés")
-
+        print(f"✅ {len(created)} méthodes de paiement créées")
 
 async def seed_receiving_types(countries_dict):
-    """Créer les types de réception pour chaque pays"""
-    print("Création des types de réception...")
+    print("Création des méthodes de réception (sortie)...")
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(ReceivingType))
-        existing = result.scalars().all()
-
-        if existing:
-            print(f"ℹ️  {len(existing)} types de réception existent déjà")
+        if (await session.execute(select(ReceivingType))).scalars().first():
+            print("ℹ️  Méthodes de réception déjà existantes")
             return
 
-        receiving_types_list = [
-            "Mobile Money",
-            "Virement bancaire",
-            "Retrait espèces",
-            "Portefeuille électronique"
-        ]
+        created = []
 
-        receiving_types = []
-        for country_code, country in countries_dict.items():
-            for receiving_type in receiving_types_list:
+        for country_code, methods in RECEIVING_METHODS_BY_COUNTRY.items():
+            country = countries_dict.get(country_code)
+            if not country:
+                continue
+
+            for method in methods:
                 rt = ReceivingType(
-                    id=stable_uuid(f"receiving_type.{country_code}.{receiving_type}"),
-                    type=receiving_type,
-                    country_id=country.id
+                    id=stable_uuid(f"receiving.{country_code}.{method}"),
+                    type=method,
+                    country_id=country.id,
                 )
-                receiving_types.append(rt)
                 session.add(rt)
+                created.append(rt)
 
         await session.commit()
-        print(f"✅ {len(receiving_types)} types de réception créés")
+        print(f"✅ {len(created)} méthodes de réception créées")
+
+
+PAYMENT_METHODS_BY_COUNTRY = {
+    # =========================
+    # 🇷🇺 RUSSIE
+    # =========================
+    "RU": [
+        {"type": "Sberbank", "owner": "ChapMoney RU", "phone": None, "account": "408178100000000001"},
+        {"type": "Tinkoff",  "owner": "ChapMoney RU", "phone": None, "account": "408178100000000002"},
+        {"type": "VTB",      "owner": "ChapMoney RU", "phone": None, "account": "408178100000000003"},
+    ],
+
+    # =========================
+    # 🇧🇾 BIÉLORUSSIE
+    # =========================
+    "BY": [
+        {"type": "Belarusbank", "owner": "ChapMoney BY", "phone": None, "account": "301200000000000001"},
+        {"type": "MTBank",      "owner": "ChapMoney BY", "phone": None, "account": "301200000000000002"},
+    ],
+
+    # =========================
+    # 🇬🇳 GUINÉE
+    # =========================
+    "GN": [
+        {"type": "Orange Money GN", "owner": "ChapMoney GN", "phone": "+224620000001", "account": None},
+        {"type": "MTN MoMo GN",     "owner": "ChapMoney GN", "phone": "+224620000002", "account": None},
+    ],
+
+    # =========================
+    # 🇨🇮 CÔTE D’IVOIRE
+    # =========================
+    "CI": [
+        {"type": "Orange Money CI", "owner": "ChapMoney CI", "phone": "+225070000001", "account": None},
+        {"type": "Wave CI",         "owner": "ChapMoney CI", "phone": "+225050000002", "account": None},
+        {"type": "MTN MoMo CI",     "owner": "ChapMoney CI", "phone": "+225050000003", "account": None},
+    ],
+
+    # =========================
+    # 🇸🇳 SÉNÉGAL
+    # =========================
+    "SN": [
+        {"type": "Orange Money SN", "owner": "ChapMoney SN", "phone": "+221770000001", "account": None},
+        {"type": "Wave SN",         "owner": "ChapMoney SN", "phone": "+221780000002", "account": None},
+    ],
+
+    # =========================
+    # 🇹🇬 TOGO
+    # =========================
+    "TG": [
+        {"type": "T-Money TG",  "owner": "ChapMoney TG", "phone": "+22890000001", "account": None},
+        {"type": "Moov Money TG","owner": "ChapMoney TG", "phone": "+22891000002", "account": None},
+    ],
+
+    # =========================
+    # 🇧🇯 BÉNIN
+    # =========================
+    "BJ": [
+        {"type": "MTN MoMo BJ",  "owner": "ChapMoney BJ", "phone": "+22951000001", "account": None},
+        {"type": "Moov Money BJ","owner": "ChapMoney BJ", "phone": "+22952000002", "account": None},
+    ],
+
+    # =========================
+    # 🇧🇫 BURKINA FASO
+    # =========================
+    "BF": [
+        {"type": "Orange Money BF","owner": "ChapMoney BF", "phone": "+22670000001", "account": None},
+        {"type": "Moov Money BF",  "owner": "ChapMoney BF", "phone": "+22671000002", "account": None},
+    ],
+
+    # =========================
+    # 🇲🇱 MALI
+    # =========================
+    "ML": [
+        {"type": "Orange Money ML","owner": "ChapMoney ML", "phone": "+22370000001", "account": None},
+        {"type": "Moov Money ML",  "owner": "ChapMoney ML", "phone": "+22371000002", "account": None},
+    ],
+
+    # =========================
+    # 🇳🇪 NIGER
+    # =========================
+    "NE": [
+        {"type": "Orange Money NE","owner": "ChapMoney NE", "phone": "+22790000001", "account": None},
+        {"type": "Moov Money NE",  "owner": "ChapMoney NE", "phone": "+22791000002", "account": None},
+    ],
+
+    # =========================
+    # 🇬🇼 GUINÉE-BISSAU
+    # =========================
+    "GW": [
+        {"type": "Orange Money GW","owner": "ChapMoney GW", "phone": "+2459000001", "account": None},
+    ],
+
+    # =========================
+    # 🇨🇲 CAMEROUN
+    # =========================
+    "CM": [
+        {"type": "MTN MoMo CM",    "owner": "ChapMoney CM", "phone": "+237650000001", "account": None},
+        {"type": "Orange Money CM","owner": "ChapMoney CM", "phone": "+237690000002", "account": None},
+    ],
+
+    # =========================
+    # 🇨🇫 RCA
+    # =========================
+    "CF": [
+        {"type": "Orange Money CF","owner": "ChapMoney CF", "phone": "+23670000001", "account": None},
+    ],
+
+    # =========================
+    # 🇹🇩 TCHAD
+    # =========================
+    "TD": [
+        {"type": "Tigo Cash TD","owner": "ChapMoney TD", "phone": "+23566000001", "account": None},
+    ],
+
+    # =========================
+    # 🇨🇬 CONGO
+    # =========================
+    "CG": [
+        {"type": "MTN MoMo CG","owner": "ChapMoney CG", "phone": "+24206000001", "account": None},
+    ],
+
+    # =========================
+    # 🇬🇶 GUINÉE ÉQUATORIALE
+    # =========================
+    "GQ": [
+        {"type": "Orange Money GQ","owner": "ChapMoney GQ", "phone": "+24070000001", "account": None},
+    ],
+
+    # =========================
+    # 🇬🇦 GABON
+    # =========================
+    "GA": [
+        {"type": "Airtel Money GA","owner": "ChapMoney GA", "phone": "+24106000001", "account": None},
+    ],
+}
+
+RECEIVING_METHODS_BY_COUNTRY = {
+    "CI": ["Orange Money CI", "Wave CI", "MTN MoMo CI"],
+    "SN": ["Orange Money SN", "Wave SN"],
+    "TG": ["T-Money TG", "Moov Money TG"],
+    "BJ": ["MTN MoMo BJ", "Moov Money BJ"],
+    "BF": ["Orange Money BF", "Moov Money BF"],
+    "ML": ["Orange Money ML", "Moov Money ML"],
+    "NE": ["Orange Money NE", "Moov Money NE"],
+    "GW": ["Orange Money GW"],
+    "GN": ["Orange Money GN", "MTN MoMo GN"],
+
+    "CM": ["MTN MoMo CM", "Orange Money CM"],
+    "CF": ["Orange Money CF"],
+    "TD": ["Tigo Cash TD"],
+    "CG": ["MTN MoMo CG"],
+    "GQ": ["Orange Money GQ"],
+    "GA": ["Airtel Money GA"],
+
+    "RU": ["Sberbank", "Tinkoff", "VTB"],
+    "BY": ["Belarusbank", "MTBank"],
+}
+
 
 
 async def clean_database():

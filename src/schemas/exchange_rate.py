@@ -2,7 +2,7 @@ from decimal import Decimal
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_serializer, field_validator, model_validator
 from enum import Enum
 
 
@@ -51,7 +51,23 @@ class ExchangeRateRead(BaseModel):
 
     class Config:
         from_attributes = True
-
+        
+class ExchangeRateListResponse(BaseModel):
+    id: UUID
+    from_currency: str
+    to_currency: str
+    rate: float
+    
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "example": {
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "from_currency": "USD",
+                "to_currency": "EUR",
+                "rate": 0.925,
+            }
+    }}
 
 # Schéma pour la requête de conversion (FLEXIBLE)
 class ConversionRequest(BaseModel):
@@ -107,6 +123,10 @@ class ConversionResponse(BaseModel):
     exchange_rate: Decimal     # Taux de change utilisé
     conversion_type: ConversionType  # Type de conversion effectuée
     timestamp: Optional[datetime] = None
+    
+    @field_serializer('send_amount', 'receive_amount', 'exchange_rate')
+    def serialize_decimal(self, value: Decimal) -> float:
+        return float(value)
 
     class Config:
         json_schema_extra = {
@@ -156,6 +176,10 @@ class ExchangeRateResponse(BaseModel):
     rate: Decimal
     inverse_rate: Decimal  # Taux inverse (utile pour l'app Flutter)
     last_updated: Optional[datetime] = None
+    
+    @field_serializer('rate', 'inverse_rate')
+    def serialize_decimal(self, value: Decimal) -> float:
+        return float(value)
 
     class Config:
         json_schema_extra = {

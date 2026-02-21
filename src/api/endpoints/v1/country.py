@@ -15,6 +15,7 @@ from src.schemas.country import (
     CountryUpdate,
     CountrySimple,
     CountryList,
+    CountryWithMethods
 )
 from src.schemas.common import SuccessResponse
 
@@ -525,3 +526,124 @@ async def create_multiple_countries(
         'total_skipped': len(skipped),
         'total_errors': len(errors)
     }
+    
+
+@router.get(
+    "/{country_id}/with-methods",
+    response_model=CountryWithMethods,
+    status_code=status.HTTP_200_OK
+)
+async def get_country_with_methods(
+    country_id: UUID,
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Récupérer un pays avec toutes ses méthodes de paiement et réception.
+    
+    Cet endpoint est utile dans le flow de transfert pour afficher
+    les options disponibles une fois qu'un pays est sélectionné.
+    
+    Exemple d'utilisation Flutter:
+    ```dart
+    final country = await apiClient.get(
+        '/countries/$countryId/with-methods'
+    );
+    
+    // Afficher payment_types dans un dropdown
+    // Afficher receiving_types dans un autre dropdown
+    ```
+    """
+    stmt = select(Country).options(
+        selectinload(Country.currency),
+        selectinload(Country.payment_types),
+        selectinload(Country.receiving_types)
+    ).where(Country.id == country_id)
+    
+    result = await session.execute(stmt)
+    country = result.scalar_one_or_none()
+    
+    if not country:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pays avec l'ID {country_id} non trouvé"
+        )
+    
+    return country
+
+
+@router.get(
+    "/code/{code_iso}/with-methods",
+    response_model=CountryWithMethods,
+    status_code=status.HTTP_200_OK
+)
+async def get_country_by_code_with_methods(
+    code_iso: str,
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Récupérer un pays par son code ISO avec toutes ses méthodes.
+    
+    Exemple: /code/US/with-methods pour obtenir les États-Unis
+    avec toutes les méthodes de paiement et réception disponibles.
+    """
+    stmt = select(Country).options(
+        selectinload(Country.currency),
+        selectinload(Country.payment_types),
+        selectinload(Country.receiving_types)
+    ).where(Country.code_iso == code_iso.upper())
+    
+    result = await session.execute(stmt)
+    country = result.scalar_one_or_none()
+    
+    if not country:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pays avec le code '{code_iso.upper()}' non trouvé"
+        )
+    
+    return country
+
+
+@router.get(
+    "/with-methods/list",
+    response_model=List[CountryWithMethods],
+    status_code=status.HTTP_200_OK
+)
+async def get_all_countries_with_methods(
+    can_send: Optional[bool] = Query(None, description="Filtrer par pays qui peuvent envoyer"),
+    currency_id: Optional[UUID] = Query(None, description="Filtrer par devise"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Récupérer tous les pays avec leurs méthodes.
+    
+    Utile pour:
+    - Afficher liste des pays d'envoi avec leurs options
+    - Afficher liste des pays de réception avec leurs options
+    - Pré-charger toutes les données pour l'UI de transfert
+    
+    Exemples:
+    - GET /countries/with-methods/list → Tous les pays
+    - GET /countries/with-methods/list?can_send=true → Pays d'envoi uniquement
+    - GET /countries/with-methods/list?currency_id=uuid → Pays utilisant une devise
+    """
+    stmt = select(Country).options(
+        selectinload(Country.currency),
+        selectinload(Country.payment_types),
+        selectinload(Country.receiving_types)
+    )
+    
+    # Apply filters
+    if can_send is not None:
+        stmt = stmt.where(Country.can_send == can_send)
+    
+    if currency_id:
+        stmt = stmt.where(Country.currency_id == currency_id)
+    
+    # Order by name
+    stmt = stmt.order_by(Country.name)
+    
+    result = await session.execute(stmt)
+    countries = result.scalars().all()
+    
+    return countries

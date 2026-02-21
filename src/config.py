@@ -32,10 +32,11 @@ class Settings(BaseSettings):
 	POSTGRES_PORT: int
 	DB_URL: str
 
+
 	model_config = SettingsConfigDict(env_file=".env", extra='ignore')
 
 	def active_database_url(self):
-		return self.DB_URL if self.ENV == 'docker' else self.DATABASE_URL
+		return self.DATABASE_URL
 
 
 settings = Settings()

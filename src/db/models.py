@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
-from sqlalchemy import Index, UniqueConstraint, text
+from sqlalchemy import Index, UniqueConstraint, func, text, Enum as PgEnum
 
 from sqlmodel import SQLModel, Field, Column, DECIMAL, Relationship
 import sqlalchemy.dialects.postgresql as pg
@@ -40,7 +40,17 @@ class User(SQLModel, table=True):
                                  sa_column=Column(pg.TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow))
 
     token: "FCMToken" = Relationship(back_populates='user', cascade_delete=True)
-    transactions: List["Transaction"] = Relationship(back_populates='sender', cascade_delete=True)
+    # Transactions envoyées
+    sent_transactions: List["Transaction"] = Relationship(
+        back_populates="sender",
+        sa_relationship_kwargs={"foreign_keys": "[Transaction.sender_id]"},
+    )
+
+    # Transactions traitées (admin)
+    processed_transactions: List["Transaction"] = Relationship(
+        back_populates="processed_by",
+        sa_relationship_kwargs={"foreign_keys": "[Transaction.processed_by_admin_id]"},
+    )
 
 
 class Currency(SQLModel, table=True):
@@ -102,11 +112,21 @@ class PaymentType(SQLModel, table=True):
 
 
 class TransactionStatus(str, Enum):
-    PENDING = "En attente"
-    COMPLETED = "Effectuée"
-    FOUNDS_DEPOSITED = 'Dépôt confirmé'
-    EXPIRED = "Expirée"
-    CANCELLED = "Annulée"
+    """
+    Flow: FUNDS_DEPOSITED → IN_PROGRESS → COMPLETED
+    
+    FUNDS_DEPOSITED = User a confirmé avoir déposé les fonds
+    IN_PROGRESS     = Admin a vérifié, transfert en cours
+    COMPLETED       = Destinataire a reçu l'argent
+    EXPIRED         = Timer expiré (jamais créé en DB normalement)
+    CANCELLED       = Annulée par user ou admin
+    """
+    FUNDS_DEPOSITED = "FUNDS_DEPOSITED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+
 
 
 def generate_reference():
@@ -118,6 +138,23 @@ class Transaction(SQLModel, table=True):
 
     id: uuid.UUID = Field(sa_column=Column(pg.UUID, nullable=False, primary_key=True, default=uuid.uuid4))
     timestamp: datetime = Field(sa_column=Column(pg.TIMESTAMP(timezone=True), default=datetime.now))
+    
+    created_at: datetime = Field(
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=func.now(),
+        )
+    )
+
+    updated_at: datetime = Field(
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=func.now(),
+            onupdate=func.now(),
+        )
+    )
     reference: str = Field(sa_column=Column(pg.VARCHAR(12), unique=True), default_factory=generate_reference)
     sender_id: uuid.UUID = Field(foreign_key="users.id")
     sender_country: str = Field(sa_column=Column(pg.VARCHAR(50), nullable=False))
@@ -127,15 +164,51 @@ class Transaction(SQLModel, table=True):
     receiver_currency: str = Field(sa_column=Column(pg.VARCHAR(10)))
     receiver_amount: int = Field(sa_column=Column(pg.INTEGER))
     conversion_rate: Decimal = Field(sa_column=Column(DECIMAL(precision=10, scale=2)))
-    payment_type: str = Field(sa_column=Column(pg.VARCHAR(50)))
+    payment_method: str = Field(sa_column=Column(pg.VARCHAR(50)))
     recipient_name: str = Field(sa_column=Column(pg.VARCHAR(50)))
     recipient_phone: str = Field(sa_column=Column(pg.VARCHAR(50)))
-    recipient_type: str = Field(sa_column=Column(pg.VARCHAR(50)))
+    receiving_method: str = Field(sa_column=Column(pg.VARCHAR(50)))
     include_fee: bool = Field(sa_column=Column(pg.BOOLEAN, default=False))
-    fee_amount: int = Field(sa_column=Column(pg.INTEGER, nullable=False, default="0"))
-    status: TransactionStatus = Field(sa_column=Column(pg.VARCHAR(20), nullable=False), default=TransactionStatus.FOUNDS_DEPOSITED)
+    fee_amount: int = Field(sa_column=Column(pg.INTEGER, nullable=False, default=0))
+    status: TransactionStatus = Field(
+        sa_column=Column(
+            PgEnum(TransactionStatus, name="transaction_status", create_type=False),
+            nullable=False,
+            default=TransactionStatus.FUNDS_DEPOSITED,
+        )
+    )
 
-    sender: User = Relationship(back_populates='transactions')
+    processed_at: datetime | None = Field(
+        sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=True)
+    )
+
+    completed_at: datetime | None = Field(
+        sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=True)
+    )
+
+    cancelled_at: datetime | None = Field(
+        sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=True)
+    )
+
+    expired_at: datetime | None = Field(
+        sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=True)
+    )
+
+    processed_by_admin_id: uuid.UUID | None = Field(
+        foreign_key="users.id",
+        nullable=True
+    )
+    
+    # Relations
+    sender: "User" = Relationship(
+        back_populates="sent_transactions",
+        sa_relationship_kwargs={"foreign_keys": "[Transaction.sender_id]"},
+    )
+
+    processed_by: Optional["User"] = Relationship(
+        back_populates="processed_transactions",
+        sa_relationship_kwargs={"foreign_keys": "[Transaction.processed_by_admin_id]"},
+    )
 
 
 class Fee(SQLModel, table=True):
@@ -193,3 +266,41 @@ class ExchangeRates(SQLModel, table=True):
 
     from_currency: Currency = Relationship(sa_relationship_kwargs={'foreign_keys': "[ExchangeRates.from_currency_id]"})
     to_currency: Currency = Relationship(sa_relationship_kwargs={"foreign_keys": "[ExchangeRates.to_currency_id]"})
+    
+    
+class TransactionStatusHistory(SQLModel, table=True):
+    __tablename__ = "transaction_status_history"
+
+    id: uuid.UUID = Field(
+        sa_column=Column(pg.UUID, primary_key=True, default=uuid.uuid4)
+    )
+
+    transaction_id: uuid.UUID = Field(
+        foreign_key="transactions.id",
+        nullable=False
+    )
+
+    old_status: TransactionStatus = Field(
+        sa_column=Column(pg.VARCHAR(20), nullable=False)
+    )
+
+    new_status: TransactionStatus = Field(
+        sa_column=Column(pg.VARCHAR(20), nullable=False)
+    )
+
+    changed_by_admin_id: uuid.UUID | None = Field(
+        foreign_key="users.id",
+        nullable=True
+    )
+
+    reason: str | None = Field(
+        sa_column=Column(pg.VARCHAR(255), nullable=True)
+    )
+
+    changed_at: datetime = Field(
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=func.now(),
+        )
+    )

@@ -5,6 +5,8 @@ from pydantic import BaseModel, field_validator, Field
 from uuid import UUID
 
 from src.schemas.currency import CurrencyModel
+from src.schemas.payment_method import PaymentTypeRead
+from src.schemas.rtype import ReceivingTypeRead
 
 # ============================================
 # COUNTRY SCHEMAS
@@ -68,4 +70,25 @@ class CountryList(BaseModel):
     total: int
     countries: List[CountryModel]
 
+
+
+# ============================================
+# COUNTRY WITH METHODS
+# ============================================
+
+class CountryWithMethods(BaseModel):
+    """Schema for country with payment and receiving methods"""
+    id: UUID
+    name: str
+    code_iso: str
+    can_send: bool
+    currency_id: UUID
+    currency: Optional[CurrencyModel] = None
+    payment_types: List[PaymentTypeRead] = []
+    receiving_types: List[ReceivingTypeRead] = []
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
 

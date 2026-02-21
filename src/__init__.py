@@ -4,9 +4,12 @@ from starlette.middleware.cors import CORSMiddleware
 from src.api.endpoints.v1 import currency, rates, country, receiving_type, payment_method, transaction, fees, fcm_token, exchange_rates, user, \
     healthcheck
 
+from src.api.endpoints.v1.admin_transactions import router as admin_transaction_router
+from src.api.endpoints.v1.ws_routes import router as ws_router
+
 version = 'v1'
 app = FastAPI(
-    title="Money transfer",
+    title="Chapmoney APIs",
     version=version
 )
 
@@ -20,11 +23,14 @@ app.add_middleware(
 
 app.include_router(healthcheck.router, tags=['Health Check'])
 app.include_router(currency.router, prefix=f"/api/{version}/currency", tags=['Currency'])
-app.include_router(rates.router, prefix=f"/api/{version}/currency", tags=['Rate'])
+# app.include_router(rates.router, prefix=f"/api/{version}/currency", tags=['Rate'])
 app.include_router(country.router, prefix=f"/api/{version}/country", tags=['Country'])
 app.include_router(receiving_type.router, prefix=f"/api/{version}/receiving-type", tags=['Receiving types'])
 app.include_router(payment_method.router, prefix=f"/api/{version}/payment-type", tags=['Payment types'])
+# app.include_router(transfer.router, prefix=f"/api/{version}/transfers", tags=['Transfers'])
 app.include_router(transaction.router, prefix=f"/api/{version}/transactions", tags=['Transactions'])
+app.include_router(admin_transaction_router, prefix=f"/api/{version}", tags=['Admin - Transactions'])
+app.include_router(ws_router, prefix=f"/api/{version}", tags=['WebSocket'])
 app.include_router(fees.router, prefix=f"/api/{version}/fees", tags=['Fees'])
 app.include_router(fcm_token.router, prefix=f"/api/{version}/tokens", tags=['Tokens'])
 app.include_router(exchange_rates.router, prefix=f"/api/{version}/exchange-rates", tags=['Exchange Rates'])

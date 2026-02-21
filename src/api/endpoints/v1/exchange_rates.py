@@ -5,13 +5,15 @@ from datetime import datetime
 
 from fastapi import APIRouter, status, HTTPException, Depends, Response, Query
 from sqlmodel import select
+from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.auth.permission import admin_required
 from src.db.models import ExchangeRates, Country, Currency
 from src.db.session import get_session
 from src.schemas.exchange_rate import (
-    CreateExchangeRate, 
+    CreateExchangeRate,
+    ExchangeRateListResponse, 
     ExchangeRateRead, 
     UpdateExchangeRate,
     ConversionRequest,
@@ -70,6 +72,23 @@ async def get_exchange_rates(session: AsyncSession = Depends(get_session)):
     results = await session.execute(stmt)
     return results.scalars().all()
 
+
+@router.get("/public" , status_code=status.HTTP_200_OK, response_model=List[ExchangeRateListResponse])
+async def get_exchange_rates_public(session: AsyncSession = Depends(get_session)):
+    stmt = select(ExchangeRates).options(
+        selectinload(ExchangeRates.from_currency),
+        selectinload(ExchangeRates.to_currency)
+    ).order_by(ExchangeRates.id)
+    results = await session.execute(stmt)
+    rates = results.scalars().all()
+    return [
+        ExchangeRateListResponse(
+            id=rate.id,
+            from_currency=rate.from_currency.code,
+            to_currency=rate.to_currency.code,
+            rate=float(rate.rate),
+        ) for rate in rates
+    ]
 
 @router.patch("/{id}", status_code=status.HTTP_200_OK, response_model=ExchangeRateRead, dependencies=[Depends(admin_required)])
 async def update_exchange_rate(
