@@ -1,122 +1,133 @@
-# app/api/routes/ws_routes.py
+"""
+WebSocket Routes — User + Admin endpoints
+"""
 
+import asyncio
+import json
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from jose import jwt, JWTError
 
-from src.auth.permission import agent_or_admin_required
 from src.config import settings
 from src.core.websocket_manager import ws_manager
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 
-def _extract_user_id_from_token(token: str) -> str | None:
-    """Vérifie le JWT et extrait le user_id."""
+def decode_token(token: str) -> dict | None:
+    """Décoder le JWT et retourner le payload, ou None si invalide."""
     try:
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-        )
-        return payload.get("sub")  # ou "user_id" selon ton JWT
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id = payload.get("sub")
+        role = payload.get("role", "user")
+        if user_id is None:
+            return None
+        logger.info(f"🔑 WS token decoded → user_id={user_id}, role={role}")
+        return {"user_id": str(user_id), "role": role}
     except JWTError as e:
-        logger.warning(f"Invalid WS token: {e}")
+        logger.warning(f"❌ WS token invalid: {e}")
         return None
 
 
+# ==========================================
+# USER WEBSOCKET (mobile app)
+# ==========================================
+
 @router.websocket("/ws/transactions")
-async def websocket_transactions(
-    websocket: WebSocket,
-    token: str = Query(...),
-):
+async def ws_user_transactions(websocket: WebSocket, token: str = Query(...)):
     """
-    WebSocket endpoint pour les mises à jour en temps réel.
-
-    Connexion:
-        ws://host/ws/transactions?token=<jwt_token>
-
-    Messages reçus par le client:
-    {
-        "event": "transaction_status_updated",
-        "data": {
-            "transaction_id": "uuid",
-            "new_status": "IN_PROGRESS",
-            "old_status": "FUNDS_DEPOSITED",
-            "reference": "TXN-20260215-XXXX",
-            "updated_at": "2026-02-15T14:30:00Z"
-        }
-    }
+    WebSocket pour les utilisateurs (app mobile Flutter).
+    Reçoit les mises à jour de statut de leurs transactions.
     """
-    # ✅ Authentifier AVANT d'accepter la connexion
-    user_id = _extract_user_id_from_token(token)
-
-    if not user_id:
+    payload = decode_token(token)
+    if not payload:
         await websocket.close(code=4001, reason="Invalid token")
         return
 
-    # Connecter
-    await ws_manager.connect(websocket, user_id)
+    user_id = payload["user_id"]
+    await ws_manager.connect_user(user_id, websocket)
 
     try:
-        # Garder la connexion ouverte
         while True:
-            # Écouter les messages du client (heartbeat/ping)
             data = await websocket.receive_text()
-
+            # Heartbeat ping/pong
             if data == "ping":
                 await websocket.send_text("pong")
-
     except WebSocketDisconnect:
-        ws_manager.disconnect(websocket, user_id)
+        ws_manager.disconnect_user(user_id, websocket)
     except Exception as e:
-        logger.error(f"WS error for user={user_id}: {e}")
-        ws_manager.disconnect(websocket, user_id)
-        
-        
+        logger.error(f"WS user error: {e}")
+        ws_manager.disconnect_user(user_id, websocket)
 
 
-# ============================================
-# 🔧 DEBUG ENDPOINTS (supprimer en production)
-# ============================================
+# ==========================================
+# ADMIN WEBSOCKET (dashboard Next.js)
+# ==========================================
+
+@router.websocket("/ws/admin")
+async def ws_admin(websocket: WebSocket, token: str = Query(...)):
+    """
+    WebSocket pour les administrateurs (dashboard Next.js).
+    Reçoit les notifications de nouvelles transactions, etc.
+    """
+    payload = decode_token(token)
+    if not payload:
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
+    # Vérifier que c'est bien un admin
+    if payload.get("role") not in ("admin", "agent"):
+        logger.warning(f"⛔ WS admin rejected: user_id={payload['user_id']}, role={payload.get('role')}")
+        await websocket.close(code=4003, reason="Admin access required")
+        return
+
+    admin_id = payload["user_id"]
+    await ws_manager.connect_admin(admin_id, websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        ws_manager.disconnect_admin(admin_id, websocket)
+    except Exception as e:
+        logger.error(f"WS admin error: {e}")
+        ws_manager.disconnect_admin(admin_id, websocket)
+
+
+# ==========================================
+# DEBUG ENDPOINTS (retirer en production)
+# ==========================================
 
 @router.get("/ws/debug/connections")
-async def debug_connections(admin=Depends(agent_or_admin_required)):
-    """Liste toutes les connexions WS actives."""
-    users = {
-        uid: len(ws_set) for uid, ws_set in ws_manager._connections.items()
-    }
-    return {
-        "active_users": ws_manager.active_users_count,
-        "active_connections": ws_manager.active_connections_count,
-        "users": users,
-    }
+async def debug_connections():
+    """Voir toutes les connexions actives (users + admins)."""
+    return ws_manager.get_debug_info()
 
 
-@router.get("/ws/debug/test-notify/{user_id}")
-async def debug_test_notify(user_id: str, admin=Depends(agent_or_admin_required)):
-    """Envoie une fausse notification à un user pour tester."""
-    is_connected = user_id in ws_manager._connections
-
-    await ws_manager.notify_user(
-        user_id=user_id,
-        data={
-            "event": "transaction_status_updated",
-            "data": {
-                "transaction_id": "debug-test-000",
-                "old_status": "FUNDS_DEPOSITED",
-                "new_status": "IN_PROGRESS",
-                "reference": "TEST-DEBUG",
-                "updated_at": "2026-02-21T00:00:00Z",
-            },
+@router.get("/ws/debug/test-admin-notify")
+async def test_admin_notify():
+    """Envoyer une notification test à tous les admins connectés."""
+    test_data = {
+        "type": "new_transaction",
+        "transaction": {
+            "id": "test-123",
+            "reference": "TEST-001",
+            "sender_name": "Test User",
+            "receiver_name": "Test Receiver",
+            "send_amount": 10000,
+            "send_currency_code": "RUB",
+            "receive_amount": 75000,
+            "receive_currency_code": "XOF",
+            "status": "FUNDS_DEPOSITED",
+            "created_at": "2025-01-01T12:00:00Z",
         },
-    )
-
+    }
+    await ws_manager.notify_all_admins(test_data)
+    info = ws_manager.get_debug_info()
     return {
-        "user_id": user_id,
-        "is_connected": is_connected,
-        "connections": len(ws_manager._connections.get(user_id, set())),
-        "result": "sent" if is_connected else "SKIPPED — user not connected",
+        "sent": True,
+        "admin_connections": info["admins"]["total_connections"],
     }

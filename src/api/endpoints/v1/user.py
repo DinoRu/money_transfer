@@ -98,8 +98,8 @@ async def login(user_data: UserLogin, session: AsyncSession = Depends(get_sessio
             detail="Identifiants invalides",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token = create_access_token({'sub': str(user.id)})
-    refresh_token = create_refresh_token({"sub": str(user.id)})
+    access_token = create_access_token({'sub': str(user.id), 'role': user.role})
+    refresh_token = create_refresh_token({"sub": str(user.id), "role": user.role})
 
     return UserWithToken(
         id=user.id,

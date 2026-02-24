@@ -129,6 +129,21 @@ async def update_transaction_status(
             },
         },
     )
+    
+    # ============================================
+    # 4️⃣ ✅ Notifier TOUS les admins connectés
+    #    (synchro entre admins sur le dashboard)
+    # ============================================
+    await ws_manager.notify_all_admins({
+        "type": "status_update",
+        "transaction": {
+            "id": str(transaction.id),
+            "reference": transaction.reference,
+            "status": body.new_status.value,
+            "updated_at": transaction.updated_at.isoformat(),
+        },
+    })
+
 
     return StatusUpdateResponse(
         transaction_id=str(transaction.id),

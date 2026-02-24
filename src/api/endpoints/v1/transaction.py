@@ -4,8 +4,8 @@ from uuid import UUID
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Query, status, HTTPException, Depends, BackgroundTasks, WebSocket, WebSocketDisconnect
-from fastapi_mail import ConnectionConfig, MessageSchema, FastMail
+from fastapi import APIRouter, Query, status, HTTPException, Depends, BackgroundTasks
+
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
@@ -19,13 +19,13 @@ from src.db.models import (
 )
 from src.db.session import get_session
 from src.schemas.transaction import (
-    TransactionRead, TransactionCreate, TransactionUpdate, 
+    TransactionRead, TransactionCreate, TransactionUpdate, TransferCalculation, 
     TransferEstimateRequest, TransferEstimateResponse, 
     TransferLimits, TransferMethodsResponse, 
     TransferPreviewRequest, TransferPreviewResponse, 
     TransferQuoteRequest, TransferQuoteResponse
 )
-from src.firebase import messaging
+from src.core.websocket_manager import ws_manager
 
 router = APIRouter()
 
@@ -37,74 +37,6 @@ HUNDRED = Decimal("100")
 DEFAULT_SCALE = Decimal("0.01")
 QUOTE_EXPIRY_MINUTES = 30
 DEFAULT_ESTIMATED_FEE = Decimal("5.0")
-
-
-# =============================================================================
-# WEBSOCKET MANAGER
-# =============================================================================
-
-class ConnectionManager:
-    """Gestionnaire de connexions WebSocket pour les notifications en temps réel"""
-    
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        """Diffuse un message à toutes les connexions actives"""
-        disconnected = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                disconnected.append(connection)
-        
-        # Nettoyer les connexions mortes
-        for conn in disconnected:
-            self.disconnect(conn)
-
-
-manager = ConnectionManager()
-
-
-# =============================================================================
-# MAIL CONFIGURATION
-# =============================================================================
-
-mail_conf = ConnectionConfig(
-    MAIL_USERNAME="diarra.msa",
-    MAIL_PASSWORD=settings.MAIL_PASSWORD,
-    MAIL_FROM=settings.MAIL_FROM,
-    MAIL_FROM_NAME=settings.MAIL_FROM_NAME,
-    MAIL_PORT=587,
-    MAIL_SERVER="smtp.gmail.com",
-    MAIL_STARTTLS=True,
-    MAIL_SSL_TLS=False,
-    USE_CREDENTIALS=True,
-    VALIDATE_CERTS=True
-)
-
-
-# =============================================================================
-# DATA CLASSES
-# =============================================================================
-
-@dataclass
-class TransferCalculation:
-    """Résultat des calculs de transfert"""
-    sender_amount: Decimal
-    receiver_amount: Decimal
-    total_to_pay: Decimal
-    fee_value: Decimal
-    fee_percent: Decimal
-    exchange_rate: Decimal
 
 
 # =============================================================================
@@ -510,75 +442,6 @@ async def perform_transfer_calculation(
     )
 
 
-# =============================================================================
-# UTILITY FUNCTIONS - NOTIFICATIONS
-# =============================================================================
-
-async def send_notification_email(
-    transaction: Transaction,
-    background_tasks: BackgroundTasks
-):
-    """
-    Envoie un email de notification pour un nouveau dépôt
-    
-    Args:
-        transaction: Transaction concernée
-        background_tasks: FastAPI background tasks
-    """
-    message = MessageSchema(
-        subject="Nouveau dépôt confirmé",
-        recipients=[
-            "madibablackpes@gmail.com",
-            "diarra.msa.pro@gmail.com",
-            "diarraOO@bk.ru"
-        ],
-        body=f"""
-        <html>
-            <body>
-                <h2>Nouvelle transaction nécessitant validation</h2>
-                <p><strong>Référence:</strong> {transaction.reference}</p>
-                <p><strong>Montant:</strong> {transaction.sender_amount} {transaction.sender_currency}</p>
-                <p><strong>De:</strong> {transaction.sender_country}</p>
-                <p><strong>Vers:</strong> {transaction.receiver_country}</p>
-                <p><strong>Destinataire:</strong> {transaction.recipient_name}</p>
-                <p><strong>Téléphone:</strong> {transaction.recipient_phone}</p>
-                <p><strong>Méthode de paiement:</strong> {transaction.payment_method}</p>
-                <p><strong>Méthode de réception:</strong> {transaction.receiving_method}</p>
-            </body>
-        </html>
-        """,
-        subtype="html"
-    )
-    
-    fm = FastMail(mail_conf)
-    background_tasks.add_task(fm.send_message, message)
-
-
-async def send_push_notification(transaction: Transaction):
-    """
-    Envoie une notification push Firebase
-    
-    Args:
-        transaction: Transaction concernée
-    """
-    try:
-        token = settings.TOKEN
-        message = messaging.Message(
-            notification=messaging.Notification(
-                title="Transaction Validée ✅",
-                body=f"Votre transaction de {transaction.sender_amount} {transaction.sender_currency} a été approuvée !",
-            ),
-            token=token,
-            data={
-                "transaction_id": str(transaction.id),
-                "reference": transaction.reference,
-                "type": "TRANSACTION_UPDATE"
-            }
-        )
-        messaging.send(message)
-    except Exception as e:
-        # Log l'erreur mais ne fait pas échouer la requête
-        print(f"Erreur lors de l'envoi de la notification push: {e}")
 
 
 # =============================================================================
@@ -616,18 +479,25 @@ async def create_transaction(
     # Charger les relations
     await session.refresh(transaction, ["sender"])
     
-    # Envoyer notification WebSocket
-    await manager.broadcast({
-        "type": "NEW_TRANSACTION",
-        "data": {
+    # ✅ AJOUTER : Notifier tous les admins connectés au dashboard
+    await ws_manager.notify_all_admins({
+        "type": "new_transaction",
+        "transaction": {
             "id": str(transaction.id),
             "reference": transaction.reference,
-            "amount": float(transaction.sender_amount),
-            "currency": transaction.sender_currency,
-            "status": transaction.status,
-            "timestamp": transaction.timestamp.isoformat()
-        }
+            "sender_name": f"{sender.full_name}",
+            "sender_phone": sender.phone,
+            "receiver_name": transaction.recipient_name,
+            "receiver_phone": transaction.recipient_phone,
+            "send_amount": float(transaction.sender_amount),
+            "send_currency_code": transaction.sender_currency,
+            "receive_amount": float(transaction.receiver_amount),
+            "receive_currency_code": transaction.receiver_currency,
+            "status": transaction.status.value if hasattr(transaction.status, 'value') else str(transaction.status),
+            "created_at": transaction.timestamp.isoformat() if transaction.timestamp else None,
+        },
     })
+    
     
     return transaction
 
@@ -730,23 +600,6 @@ async def update_transaction_status(
     await session.commit()
     await session.refresh(transaction, ["sender"])
     
-    # Notifier le changement de statut
-    if previous_status != transaction.status:
-        await manager.broadcast({
-            "type": "STATUS_CHANGE",
-            "data": {
-                "id": str(transaction.id),
-                "reference": transaction.reference,
-                "old_status": previous_status,
-                "new_status": transaction.status,
-                "updated_by": user.full_name,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        })
-        
-        # Envoyer notification push si transaction complétée
-        if transaction.status == TransactionStatus.COMPLETED:
-            await send_push_notification(transaction)
     
     return transaction
 
@@ -780,7 +633,7 @@ async def send_deposit_email(
 ):
     """Envoie un email de notification pour un nouveau dépôt"""
     transaction = await get_transaction_or_404(id, session)
-    await send_notification_email(transaction, background_tasks)
+   
     
     return {
         "message": "Email envoyé avec succès 🎉",
@@ -1439,32 +1292,3 @@ async def get_payment_details(
         })
     
     return details
-
-
-
-
-
-# =============================================================================
-# WEBSOCKET ENDPOINT
-# =============================================================================
-
-@router.websocket("/ws/transactions")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    Connexion WebSocket pour les notifications en temps réel
-    
-    Permet aux clients de recevoir des mises à jour instantanées sur :
-    - Nouvelles transactions
-    - Changements de statut
-    - Autres événements importants
-    """
-    await manager.connect(websocket)
-    try:
-        while True:
-            # Garder la connexion ouverte
-            data = await websocket.receive_text()
-            # On peut implémenter des commandes ici si nécessaire
-            if data == "ping":
-                await websocket.send_json({"type": "pong"})
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)

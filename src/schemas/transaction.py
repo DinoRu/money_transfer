@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
@@ -363,3 +364,18 @@ VALID_TRANSITIONS = {
         TransactionStatus.CANCELLED,
     },
 }
+
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
+
+@dataclass
+class TransferCalculation:
+    """Résultat des calculs de transfert"""
+    sender_amount: Decimal
+    receiver_amount: Decimal
+    total_to_pay: Decimal
+    fee_value: Decimal
+    fee_percent: Decimal
+    exchange_rate: Decimal
