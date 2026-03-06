@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from src.db.models import *
+from src.db.models import (AgentAccount, LedgerTx, LedgerEntry, Settlement,
+    LedgerEntryType, LedgerCategory, SettlementStatus)
 from src.config import settings
 
 

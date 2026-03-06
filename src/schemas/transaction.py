@@ -3,7 +3,7 @@ from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from pydantic import BaseModel, EmailStr, Field, field_serializer, field_validator
 
@@ -13,6 +13,7 @@ from src.schemas.payment_method import PaymentTypeRead
 from src.schemas.rtype import ReceivingTypeRead
 from src.db.models import TransactionStatus
 from src.schemas.user import UserRead
+
 
 
 class TransactionBase(BaseModel):
@@ -336,25 +337,56 @@ class UpdateTransactionStatus(BaseModel):
 # ============================================
 # SCHÉMA
 # ============================================
+# =============================================================================
+# STATUS UPDATE — Request
+# =============================================================================
 
 class StatusUpdateRequest(BaseModel):
+    """
+    Requête de changement de statut d'une transaction.
+
+    Les wallet_id sont optionnels. Si absents, la résolution est automatique:
+      - collection:   tx.payment_method  + tx.sender_currency   → wallet agent
+      - disbursement: tx.receiving_method + tx.receiver_currency → wallet agent
+      - fee:          system@chapmoney.dev + tx.sender_currency  → wallet frais
+    """
     new_status: TransactionStatus
-    reason: str | None = None
+    reason: Optional[str] = None
+
+    # Overrides manuels — optionnels, pour cas spéciaux uniquement
+    collection_wallet_id: Optional[UUID] = None
+    disbursement_wallet_id: Optional[UUID] = None
+    fee_wallet_id: Optional[UUID] = None
+    
+
+class LedgerActionResult(BaseModel):
+    """Résultat de l'opération ledger automatique."""
+    action: str                          # "collection" | "disbursement" | "reversal" | "none" | "error"
+    success: bool
+    detail: Optional[str] = None
+    ledger_tx_ref: Optional[str] = None  # Référence de la LedgerTx créée
+    entries_reversed: Optional[int] = None
+    already_processed: Optional[bool] = None
+    resolution_help: Optional[str] = None
+
 
 
 class StatusUpdateResponse(BaseModel):
     transaction_id: str
+    reference: str
     old_status: str
     new_status: str
-    reference: str
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    # Résultat de l'opération ledger automatique
+    ledger: Optional[LedgerActionResult] = None
 
 
-# Transitions valides
-VALID_TRANSITIONS = {
+# =============================================================================
+# TRANSITIONS VALIDES
+# =============================================================================
+
+VALID_TRANSITIONS: dict[TransactionStatus, Set[TransactionStatus]] = {
     TransactionStatus.FUNDS_DEPOSITED: {
         TransactionStatus.IN_PROGRESS,
         TransactionStatus.CANCELLED,
@@ -364,6 +396,7 @@ VALID_TRANSITIONS = {
         TransactionStatus.CANCELLED,
     },
 }
+
 
 
 # =============================================================================

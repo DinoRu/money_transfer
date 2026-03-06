@@ -502,34 +502,109 @@ async def create_transaction(
     return transaction
 
 
+# =============================================================================
+# CLIENT — Mes transactions
+# =============================================================================
+
+@router.get(
+    "/me",
+    response_model=List[TransactionRead],
+    summary="Mes transactions",
+    description="Le client connecté voit uniquement SES transactions",
+)
+async def get_my_transactions(
+    tx_status: Optional[TransactionStatus] = Query(
+        None, alias="status", description="Filtrer par statut"
+    ),
+    page: int = Query(1, ge=1, description="Numéro de page"),
+    limit: int = Query(50, ge=1, le=100, description="Éléments par page"),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Liste les transactions du client connecté.
+
+    - Filtrées automatiquement par sender_id == current_user.id
+    - Tri par date décroissante (plus récent en premier)
+    - Pagination standard (page + limit)
+    - Filtre optionnel par statut
+
+    Utilisé par: App mobile Flutter → Écran "Mes transferts"
+
+    Exemples:
+        GET /transactions/me                     → toutes mes transactions
+        GET /transactions/me?status=COMPLETED    → mes transactions terminées
+        GET /transactions/me?page=2&limit=20     → page 2, 20 par page
+    """
+    stmt = (
+        select(Transaction)
+        .where(Transaction.sender_id == current_user.id)
+        .order_by(Transaction.created_at.desc())
+    )
+
+    if tx_status:
+        stmt = stmt.where(Transaction.status == tx_status)
+
+    offset = (page - 1) * limit
+    stmt = stmt.offset(offset).limit(limit)
+
+    results = await session.execute(stmt)
+    return list(results.scalars().all())
+
+
+# =============================================================================
+# ADMIN — Toutes les transactions
+# =============================================================================
+
 @router.get(
     "",
     response_model=List[TransactionRead],
-    summary="Liste des transactions",
-    description="Récupère la liste des transactions avec filtres et pagination"
+    summary="Toutes les transactions (admin)",
+    description="L'admin/agent voit toutes les transactions de tous les clients",
 )
-async def get_transactions(
-    status: Optional[TransactionStatus] = Query(None, description="Filtrer par statut"),
+async def get_all_transactions(
+    tx_status: Optional[TransactionStatus] = Query(
+        None, alias="status", description="Filtrer par statut"
+    ),
+    sender_id: Optional[UUID] = Query(
+        None, description="Filtrer les transactions d'un client spécifique"
+    ),
     page: int = Query(1, ge=1, description="Numéro de page"),
-    limit: int = Query(100, ge=1, le=100, description="Nombre d'éléments par page"),
-    session: AsyncSession = Depends(get_session)
+    limit: int = Query(100, ge=1, le=100, description="Éléments par page"),
+    admin: User = Depends(agent_or_admin_required),
+    session: AsyncSession = Depends(get_session),
 ):
-    """Liste toutes les transactions avec pagination et filtres optionnels"""
-    stmt = select(Transaction).options(
-        selectinload(Transaction.sender)
-    ).order_by(Transaction.timestamp.desc())
-    
-    if status:
-        stmt = stmt.where(Transaction.status == status)
-    
-    # Pagination
+    """
+    Liste toutes les transactions du système (admin/agent uniquement).
+
+    - Charge la relation sender (nom, téléphone du client)
+    - Filtre optionnel par statut
+    - Filtre optionnel par sender_id (voir les tx d'un client précis)
+    - Pagination standard
+
+    Utilisé par: Dashboard admin Next.js → Page "Transactions"
+
+    Exemples:
+        GET /transactions                                        → toutes
+        GET /transactions?status=FUNDS_DEPOSITED                 → en attente
+        GET /transactions?sender_id=abc-123&status=COMPLETED     → complétées d'un client
+    """
+    stmt = (
+        select(Transaction)
+        .options(selectinload(Transaction.sender))
+        .order_by(Transaction.created_at.desc())
+    )
+
+    if tx_status:
+        stmt = stmt.where(Transaction.status == tx_status)
+    if sender_id:
+        stmt = stmt.where(Transaction.sender_id == sender_id)
+
     offset = (page - 1) * limit
     stmt = stmt.offset(offset).limit(limit)
-    
+
     results = await session.execute(stmt)
-    transactions = results.scalars().all()
-    
-    return transactions
+    return list(results.scalars().all())
 
 
 @router.get(

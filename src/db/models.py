@@ -1,11 +1,12 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
+from uuid import UUID, uuid4
 
-from sqlalchemy import Index, UniqueConstraint, func, text, Enum as PgEnum
+from sqlalchemy import (Index, UniqueConstraint, func, text, Enum as PgEnum, CheckConstraint, DateTime, Numeric)
 
 from sqlmodel import SQLModel, Field, Column, DECIMAL, Relationship
 import sqlalchemy.dialects.postgresql as pg
@@ -302,5 +303,314 @@ class TransactionStatusHistory(SQLModel, table=True):
             pg.TIMESTAMP(timezone=True),
             nullable=False,
             server_default=func.now(),
+        )
+    )
+
+
+
+# =============================================================================
+# ENUMS
+# =============================================================================
+
+class LedgerEntryType(str, enum.Enum):
+    """Type d'écriture comptable"""
+    DEBIT = "DEBIT"     # Augmente le solde (agent reçoit des fonds)
+    CREDIT = "CREDIT"   # Diminue le solde (agent décaisse des fonds)
+
+
+class LedgerCategory(str, enum.Enum):
+    """Catégorie de l'opération — pour reporting"""
+    TRANSACTION_IN = "TRANSACTION_IN"       # Dépôt client → agent pays envoi
+    TRANSACTION_OUT = "TRANSACTION_OUT"     # Agent pays réception → bénéficiaire
+    FEE_COLLECTED = "FEE_COLLECTED"         # Frais collectés
+    SETTLEMENT = "SETTLEMENT"               # Compensation entre agents
+    MANUAL_ADJUSTMENT = "MANUAL_ADJUSTMENT" # Ajustement manuel admin
+    TOP_UP = "TOP_UP"                       # Recharge de solde agent
+    WITHDRAWAL = "WITHDRAWAL"               # Retrait de solde agent
+    CORRECTION = "CORRECTION"               # Correction d'erreur
+
+
+class SettlementStatus(str, enum.Enum):
+    """Statut d'un settlement"""
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    EXECUTED = "EXECUTED"
+    CANCELLED = "CANCELLED"
+
+
+# =============================================================================
+# AGENT WALLET — Solde dénormalisé par agent / devise / méthode
+# =============================================================================
+
+class AgentAccount(SQLModel, table=True):
+    """
+    Solde d'un agent pour une devise et méthode de paiement donnée.
+    
+    Exemples:
+    - Agent Abidjan / XOF / Wave         → solde: 2,500,000 XOF
+    - Agent Abidjan / XOF / Orange Money  → solde: 1,200,000 XOF
+    - Agent Moscou  / RUB / Sberbank      → solde:   450,000 RUB
+    
+    Le solde est dénormalisé pour la performance.
+    La source de vérité reste le ledger (somme des écritures).
+    """
+    __tablename__ = "agent_wallets"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+
+    # Quel agent ?
+    agent_id: UUID = Field(foreign_key="users.id", index=True)
+
+    # Quelle devise ?
+    currency_id: UUID = Field(foreign_key="currencies.id", index=True)
+    currency_code: str = Field(max_length=3)  # Dénormalisé pour requêtes rapides
+
+    # Quelle méthode de paiement ? (None = solde global devise)
+    payment_method_id: Optional[UUID] = Field(
+        default=None, foreign_key="payment_type.id", index=True
+    )
+    payment_method_name: Optional[str] = Field(default=None, max_length=100)
+
+    # Solde actuel (dénormalisé, mis à jour atomiquement)
+    balance: Decimal = Field(
+        default=Decimal("0.00"),
+        sa_column=Column(Numeric(18, 2), nullable=False, server_default="0.00")
+    )
+
+    # Solde minimum autorisé (négatif = découvert autorisé)
+    min_balance: Decimal = Field(
+        default=Decimal("0.00"),
+        sa_column=Column(Numeric(18, 2), nullable=False, server_default="0.00")
+    )
+
+    is_active: bool = Field(default=True)
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now()
+        )
+    )
+
+    # Relations
+    # agent: Optional["User"] = Relationship()
+    ledger_entries: List["LedgerEntry"] = Relationship(back_populates="wallet")
+
+    __table_args__ = (
+        # Un seul wallet par combinaison agent/devise/méthode
+        Index(
+            "uq_agent_currency_method",
+            "agent_id", "currency_id", "payment_method_id",
+            unique=True
+        ),
+    )
+
+    def can_debit(self, amount: Decimal) -> bool:
+        """Vérifie si le wallet peut supporter un débit (sortie de fonds)"""
+        return (self.balance - amount) >= self.min_balance
+
+
+# =============================================================================
+# LEDGER TX — Transaction comptable (regroupe les écritures)
+# =============================================================================
+
+class LedgerTx(SQLModel, table=True):
+    """
+    Transaction comptable = groupe d'écritures qui doivent s'équilibrer.
+    
+    Exemple pour: Client CI envoie 100,000 XOF → Russie (13,500 RUB):
+    
+    LedgerTx "LDG-2025-00042":
+      ├─ DEBIT  Wallet(AgentAbidjan/XOF/Wave)    +100,000 XOF
+      ├─ CREDIT Wallet(AgentMoscou/RUB/Sberbank)  -13,500 RUB
+      └─ DEBIT  Wallet(System/XOF/Fees)             +5,000 XOF
+    """
+    __tablename__ = "ledger_transactions"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+
+    # Référence unique lisible
+    reference: str = Field(max_length=50, index=True, unique=True)
+
+    # Lien vers la transaction client (None pour settlements/ajustements)
+    transaction_id: Optional[UUID] = Field(
+        default=None, foreign_key="transactions.id", index=True
+    )
+
+    # Catégorie
+    category: LedgerCategory = Field(
+        sa_column=Column(
+            PgEnum(LedgerCategory, name="ledger_category"),
+            nullable=False
+        )
+    )
+
+    # Description lisible
+    description: str = Field(max_length=500)
+
+    # Taux de change appliqué (si multi-devises)
+    exchange_rate: Optional[Decimal] = Field(
+        default=None,
+        sa_column=Column(Numeric(12, 6))
+    )
+
+    # Qui a initié ? (admin pour ajustements manuels)
+    initiated_by_id: Optional[UUID] = Field(
+        default=None, foreign_key="users.id"
+    )
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+
+    # Relations
+    entries: List["LedgerEntry"] = Relationship(back_populates="ledger_tx")
+
+
+# =============================================================================
+# LEDGER ENTRY — Écriture comptable unitaire (IMMUTABLE)
+# =============================================================================
+
+class LedgerEntry(SQLModel, table=True):
+    """
+    Écriture comptable unitaire — JAMAIS modifiée ni supprimée.
+    
+    Règles:
+    - amount est TOUJOURS positif
+    - entry_type détermine le sens:
+        DEBIT  = +solde (l'agent reçoit)
+        CREDIT = -solde (l'agent décaisse)
+    - balance_after = snapshot du solde immédiatement après cette écriture
+    - Pour corriger: créer une écriture inverse, jamais modifier
+    """
+    __tablename__ = "ledger_entries"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+
+    # À quelle transaction comptable ?
+    ledger_tx_id: UUID = Field(foreign_key="ledger_transactions.id", index=True)
+
+    # Quel wallet impacté ?
+    wallet_id: UUID = Field(foreign_key="agent_wallets.id", index=True)
+
+    # DEBIT ou CREDIT
+    entry_type: LedgerEntryType = Field(
+        sa_column=Column(
+            PgEnum(LedgerEntryType, name="ledger_entry_type"),
+            nullable=False
+        )
+    )
+
+    # Montant (TOUJOURS positif)
+    amount: Decimal = Field(
+        sa_column=Column(Numeric(18, 2), nullable=False)
+    )
+
+    # Devise (dénormalisé)
+    currency_code: str = Field(max_length=3)
+
+    # Solde du wallet APRÈS cette écriture (piste d'audit)
+    balance_after: Decimal = Field(
+        sa_column=Column(Numeric(18, 2), nullable=False)
+    )
+
+    # Note optionnelle
+    note: Optional[str] = Field(default=None, max_length=500)
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+
+    # Relations
+    ledger_tx: Optional[LedgerTx] = Relationship(back_populates="entries")
+    wallet: Optional[AgentAccount] = Relationship(back_populates="ledger_entries")
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_ledger_amount_positive"),
+        Index("ix_ledger_wallet_created", "wallet_id", "created_at"),
+        Index("ix_ledger_tx_type", "ledger_tx_id", "entry_type"),
+    )
+
+
+# =============================================================================
+# SETTLEMENT — Compensation entre agents
+# =============================================================================
+
+class Settlement(SQLModel, table=True):
+    """
+    Compensation / rééquyhule trop de fonds et un autre en manque,
+    l'admin crée un settlement pour rééquilibrer.
+    
+    Flow: PENDING → APPROVED → EXECUTED (crée les écritures ledger)
+    """
+    __tablename__ = "settlements"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    reference: str = Field(max_length=50, index=True, unique=True)
+
+    # Agent source (celui qui paie / réduit son solde)
+    from_agent_id: UUID = Field(foreign_key="users.id", index=True)
+    from_wallet_id: UUID = Field(foreign_key="agent_wallets.id")
+
+    # Agent destination (celui qui reçoit)
+    to_agent_id: UUID = Field(foreign_key="users.id", index=True)
+    to_wallet_id: UUID = Field(foreign_key="agent_wallets.id")
+
+    # Montant source
+    amount: Decimal = Field(
+        sa_column=Column(Numeric(18, 2), nullable=False)
+    )
+    currency_code: str = Field(max_length=3)
+
+    # Si cross-currency (ex: XOF → RUB)
+    target_amount: Optional[Decimal] = Field(
+        default=None,
+        sa_column=Column(Numeric(18, 2))
+    )
+    target_currency_code: Optional[str] = Field(default=None, max_length=3)
+    exchange_rate: Optional[Decimal] = Field(
+        default=None,
+        sa_column=Column(Numeric(12, 6))
+    )
+
+    # Statut
+    status: SettlementStatus = Field(
+        default=SettlementStatus.PENDING,
+        sa_column=Column(
+            PgEnum(SettlementStatus, name="settlement_status"),
+            nullable=False,
+            server_default="PENDING"
+        )
+    )
+
+    # Lien vers l'écriture comptable (créé à l'exécution)
+    ledger_tx_id: Optional[UUID] = Field(
+        default=None, foreign_key="ledger_transactions.id"
+    )
+
+    # Metadata
+    reason: str = Field(max_length=500)
+    created_by_id: UUID = Field(foreign_key="users.id")
+    approved_by_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
+    executed_at: Optional[datetime] = Field(default=None)
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now()
         )
     )

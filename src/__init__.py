@@ -6,6 +6,7 @@ from src.api.endpoints.v1 import currency, rates, country, receiving_type, payme
 
 from src.api.endpoints.v1.admin_transactions import router as admin_transaction_router
 from src.api.endpoints.v1.ws_routes import router as ws_router
+from src.api.endpoints.v1.ledger_routes import router as ledger_router
 
 version = 'v1'
 app = FastAPI(
@@ -30,6 +31,7 @@ app.include_router(payment_method.router, prefix=f"/api/{version}/payment-type",
 # app.include_router(transfer.router, prefix=f"/api/{version}/transfers", tags=['Transfers'])
 app.include_router(transaction.router, prefix=f"/api/{version}/transactions", tags=['Transactions'])
 app.include_router(admin_transaction_router, prefix=f"/api/{version}", tags=['Admin - Transactions'])
+app.include_router(ledger_router, prefix="/api/v1")
 app.include_router(ws_router, prefix=f"/api/{version}", tags=['WebSocket'])
 app.include_router(fees.router, prefix=f"/api/{version}/fees", tags=['Fees'])
 app.include_router(fcm_token.router, prefix=f"/api/{version}/tokens", tags=['Tokens'])
